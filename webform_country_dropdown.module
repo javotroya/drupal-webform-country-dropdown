@@ -165,8 +165,25 @@ function webform_country_dropdown_form_alter(&$form, &$form_state, $form_id) {
  * Set submitted country.
  */
 function webform_country_dropdown_dropdown_alter($element, &$form_state) {
-  if (isset($form_state['values']['submitted']['country'])) {
-    $form_state['storage']['country'] = $form_state['values']['submitted']['country'];
+  if (isset($form_state['webform'])) {
+    $node = $form_state['complete form']['#node'];
+    $nid =$node->nid;
+    foreach ($form_state['values']['submitted'] as $key => $val) {
+      foreach ($form_state['webform']['component_tree']['children'] as $cid => $component) {
+        if ($key == $component['form_key']) {
+          $varname = 'webform_dropdown_' . $nid . '_' . $component['cid'];
+          $dropdown_options = variable_get($varname, FALSE);
+          if ($dropdown_options && is_array($dropdown_options)) {
+            $select_component = $component;
+            break;
+          }
+        }
+      }
+    }
+    if (isset($select_component) &&
+      isset($form_state['values']['submitted'][$select_component['form_key']])) {
+      $form_state['storage']['country'] = $form_state['values']['submitted'][$select_component['form_key']];
+    }
   }
 }
 
@@ -215,7 +232,7 @@ function webform_country_dropdown_form_webform_component_edit_form_alter(&$form,
   if (isset($form['nid']) && isset($form['cid'])) {
     $nid = $form['nid']['#value'];
     $cid = $form['cid']['#value'];
-    $varname = "webform_dropdown_$nid" . '_' . "$cid";
+    $varname = 'webform_dropdown_' . $nid . '_' . $cid;
     $dropdown_options = variable_get($varname);
     $you_need_us = $dropdown_options['dropdown_you_need_us'];
     $type = $dropdown_options['dropdown_type'];
