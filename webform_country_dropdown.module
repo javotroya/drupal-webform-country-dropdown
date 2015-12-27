@@ -1,0 +1,277 @@
+<?php
+/**
+ * @file
+ * Code for the Brochures feature.
+ */
+
+/**
+ * Implements hook_webform_select_options_info().
+ */
+function webform_country_dropdown_webform_select_options_info() {
+  $items = array();
+  $items['canada'] = array(
+    'title' => 'Provinces of Canada',
+    'options callback' => 'webform_country_dropdown_CA',
+    'file' => 'webform_country_dropdown.options.inc',
+  );
+  $items['australia'] = array(
+    'title' => 'Provinces of Australia',
+    'options callback' => 'webform_country_dropdown_AU',
+    'file' => 'webform_country_dropdown.options.inc',
+  );
+  $items['uk'] = array(
+    'title' => 'Countries of the UK',
+    'options callback' => 'webform_country_dropdown_UK',
+    'file' => 'webform_country_dropdown.options.inc',
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_menu().
+ */
+function webform_country_dropdown_menu() {
+  $items = array();
+
+  $items['get-country-states/%'] = array(
+    'delivery callback' => 'webform_country_dropdown_get_country_states',
+    'access arguments' => array('access content'),
+  );
+
+  return $items;
+}
+
+/**
+ * Get country states callback.
+ */
+function webform_country_dropdown_get_country_states() {
+  drupal_add_http_header('X-Frame-Options', 'SAMEORIGIN');
+  $country = (arg(1)) ? arg(1) : 'US';
+  $_valid_countries = _webform_country_dropdown_get_valid_countries();
+  $label = t('State');
+  switch ($country) {
+    case $_valid_countries[0]:
+    case $_valid_countries[1]:
+    case $_valid_countries[2]:
+      if ($_valid_countries[1] == $country) {
+        $label = t('Province');
+      }
+      elseif ($_valid_countries[2] == $country) {
+        $label = t('Inside U.K.');
+      }
+      module_load_include('inc', drupal_get_path('module', 'webform_country_dropdown') . '/webform_country_dropdown.options');
+      $function = "webform_country_dropdown_$country";
+      $states_list = $function();
+      break;
+
+    case 'US':
+      module_load_include('inc', drupal_get_path('module', 'webform') . '/includes/webform.options');
+      $states_list = webform_options_united_states(NULL, NULL, NULL);
+      break;
+
+    default:
+      $states_list = FALSE;
+      break;
+  }
+
+  $response = new stdClass();
+  $response->country = $country;
+  $label_title = t('This field is required.');
+  $response->label = $label . '<span class="form-required" title="' . $label_title . '">*</span>';
+
+  if ($states_list) {
+    $response->dropdown = TRUE;
+    $response->options = $states_list;
+  }
+  else {
+    $response->dropdown = FALSE;
+  }
+
+  drupal_json_output($response);
+}
+
+/**
+ * Implements hook_element_info_alter().
+ */
+function webform_country_dropdown_element_info_alter(&$type) {
+  if (isset($type['select'])) {
+    $type['select']['#process'][] = 'webform_country_dropdown_select_element_process';
+  }
+}
+
+/**
+ * Replace default select_element_process.
+ */
+function webform_country_dropdown_select_element_process($element, &$form_state, $form) {
+  $post = drupal_get_query_parameters($_POST);
+  if ((isset($post['submitted']['country']) ||
+       isset($form_state['storage']['country'])) &&
+      (isset($element['#webform_component']['form_key']) &&
+       $element['#webform_component']['form_key'] == 'state')) {
+    $_valid_countries = webform_country_dropdown_get_valid_countries();
+    $country = (isset($form_state['storage']['country'])) ? $form_state['storage']['country'] : $post['submitted']['country'];
+    $states_list = array(NULL => t('- Select -'));
+    $element['#empty_option'] = t('- Select -');
+    switch ($country) {
+      case $_valid_countries[0]:
+      case $_valid_countries[1]:
+      case $_valid_countries[2]:
+        if ($_valid_countries[1] == $country) {
+          $element['#title'] = t('Province');
+        }
+        elseif ($_valid_countries[2] == $country) {
+          $element['#title'] = t('Inside U.K.');
+        }
+        $path = drupal_get_path('module', 'webform_country_dropdown');
+        module_load_include('inc', $path . '/webform_country_dropdown.options');
+        $function = "webform_country_dropdown_$country";
+        $states_list += $function();
+        break;
+
+      case $_valid_countries[3]:
+        $path = drupal_get_path('module', 'webform');
+        module_load_include('inc', $path . '/includes/webform.options');
+        $states_list += webform_options_united_states(NULL, NULL, NULL);
+        break;
+    }
+    $element['#options'] = $states_list;
+    $extra_items = '';
+    foreach ($states_list as $key => $state) {
+      if ($key) {
+        $extra_items .= "$key|$state\n";
+      }
+    }
+    $form_state['complete form']['submitted']['state']['#webform_component']['extra']['items'] = $extra_items;
+    $form_state['complete form']['submitted']['state']['#options'] = $element['#options'];
+    if (isset($form_state['complete form']['submitted']['country_a'])) {
+      $country_list = country_get_list();
+      $form_state['complete form']['submitted']['country_a']['#webform_component']['value'] = $country_list[$form_state['storage']['country']];
+      $form_state['complete form']['submitted']['country_a']['#value'] = $country_list[$form_state['storage']['country']];
+    }
+  }
+  return $element;
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function webform_country_dropdown_form_alter(&$form, &$form_state, $form_id) {
+  if ((isset($form['#node']) && $form['#node']->type == 'webform')) {
+    array_unshift($form['#submit'], 'webform_country_dropdown_dropdown_alter');
+  }
+}
+
+/**
+ * Set submitted country.
+ */
+function webform_country_dropdown_dropdown_alter($element, &$form_state) {
+  if (isset($form_state['values']['submitted']['country'])) {
+    $form_state['storage']['country'] = $form_state['values']['submitted']['country'];
+  }
+}
+
+/**
+ * Implements hook_webform_submission_presave().
+ */
+function webform_country_dropdown_webform_submission_presave($node, &$submission) {
+  foreach ($node->webform['components'] as $key => $component) {
+    if ($component['form_key'] == 'state' &&
+      isset($submission->data[$key])) {
+      $state = $submission->data[$key];
+      break;
+    }
+    elseif ($component['form_key'] == 'state_text_field' &&
+      isset($submission->data[$key])) {
+      $state_text_field = $submission->data[$key];
+      break;
+    }
+  }
+
+  foreach ($node->webform['components'] as $cid => $component) {
+    if ($component['form_key'] == 'state_text_field' &&
+    isset($state)) {
+      $submission->data[$cid] = $state;
+      break;
+    }
+    elseif ($component['form_key'] == 'state' &&
+      isset($state_text_field)) {
+      $submission->data[$cid] = $state_text_field;
+      break;
+    }
+  }
+}
+
+/**
+ * Implements hook_form_BASE_FORM_ID_alter().
+ */
+function webform_country_dropdown_form_webform_component_edit_form_alter(&$form, &$form_state, $form_id) {
+  // We add the dropdown fieldset only to select fields.
+  if ($form['type']['#value'] != 'select') {
+    return;
+  }
+  $you_need_us = FALSE;
+  $type = 'country';
+  $add_css_classes = FALSE;
+  if (isset($form['nid']) && isset($form['cid'])) {
+    $nid = $form['nid']['#value'];
+    $cid = $form['cid']['#value'];
+    $varname = "webform_dropdown_$nid" . '_' . "$cid";
+    $dropdown_options = variable_get($varname);
+    $you_need_us = $dropdown_options['dropdown_you_need_us'];
+    $type = $dropdown_options['dropdown_type'];
+    $add_css_classes = $dropdown_options['dropdown_add_css_classes'];
+  }
+
+  $form['#attached']['js'][] = drupal_get_path('module', 'webform_country_dropdown') . '/js/admin-edit-select.js';
+  $form['dropdown_options'] = array(
+    '#type' => 'fieldset',
+    '#collapsible' => TRUE,
+    '#title' => t('Dropdown Options'),
+  );
+  $form['dropdown_options']['information'] = array(
+    '#markup' => theme('html_tag', array(
+      'element' => array(
+        '#tag' => 'p',
+        '#value' => t('You must check the listbox option in the display box for these options to take effect.'),
+      ),
+    )),
+  );
+  $form['dropdown_options']['dropdown_you_need_us'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Treat this dropdown as a country dropdown.'),
+    '#default_value' => $you_need_us,
+  );
+
+  $form['dropdown_options']['dropdown_type'] = array(
+    '#type' => 'select',
+    '#title' => t('Dropdown type.'),
+    '#options' => array(
+      'country' => t('Country'),
+      'state' => t('State'),
+    ),
+    '#description' => t('The dropdown is going to display the country list or the state list. If the state list is selected, you should leave the options field blank.'),
+    '#default_value' => $type,
+  );
+  $form['dropdown_options']['dropdown_add_css_classes'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Add CSS classes to dropdown.'),
+    '#description' => t('Should we add the Webform Dropdown CSS classes?'),
+    '#default_value' => $add_css_classes,
+  );
+  return $form;
+}
+
+/**
+ * Implements hook_webform_component_presave().
+ */
+function webform_country_dropdown_webform_component_presave(&$component) {
+  $varname = 'webform_dropdown_' . $component['nid'] . '_' . $component['cid'];
+  variable_set($varname, $component['dropdown_options']);
+}
+
+/**
+ * Get countries with select state dropdown.
+ */
+function _webform_country_dropdown_get_valid_countries() {
+  return array('AU', 'CA', 'GB', 'US');
+}
